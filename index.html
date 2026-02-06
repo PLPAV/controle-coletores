@@ -172,17 +172,17 @@
 const DATA_ATUALIZACAO = "05/02/2026";
 
 const entradas = [
-  "46-4 vento 100%",
-  "52-4 vento 100%",
-  "58-6 vento 100%",
-  "44-6 vento 100%",
-  "33-3 vento 100%",
-  "53-3(arruela) vento 100%",
-  "11-9 vento 100%",
-  "3-7 vento 100%",
+  "46-4 vento 100% jan/2026",
+  "52-4 vento 100% jan/2026",
+  "58-6 vento 100% jan/2026",
+  "44-6 vento 100% jan/2026",
+  "33-3 vento 100% jan/2026",
+  "53-3(arruela) vento 100% jan/2026",
+  "11-9 vento 100% jan/2026",
+  "3-7 vento 100% jan/2026",
   "9-10(arruela:04/02/2026) vento 100% 04/02/2026",
-  "53-7(arruela) vento 50%",
-  "45-13(arruela) vento 50%",
+  "53-7(arruela) vento 50% jan/2026",
+  "45-13(arruela) vento 50% jan/2026",
   "29-16(arruela:03/02/2026) vento 50% 03/02/2026",
   "58-4(arruela:03/02/2026 e sensor:03/02/2026) vento 50% 03/02/2026",
   "39-8(arruela:03/02/2026 e sensor:05/02/2026) vento 50% 03/02/2026",
@@ -209,7 +209,25 @@ const entradasFurosplaca = [
 
 document.getElementById("lastUpdate").textContent = DATA_ATUALIZACAO;
 
-const DATE_RE = /\b(\d{1,2}\/\d{1,2}\/\d{4})\b/g;
+/* ==========================
+   DATAS: dd/mm/aaaa | mm/aaaa | mon/aaaa (jan/2026)
+========================== */
+const DATE_FULL_RE = /\b(\d{1,2}\/\d{1,2}\/\d{4})\b/g;
+const DATE_MMYYYY_RE = /\b(\d{1,2}\/\d{4})\b/g;
+const DATE_MONYYYY_RE = /\b(jan|fev|mar|abr|mai|jun|jul|ago|set|out|nov|dez)\.?\s*\/\s*(\d{4})\b/g;
+
+function normalizeMonthYear(s){
+  return String(s || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "")
+    .replace(/^([a-z]{3})\.(\/)/, "$1$2");
+}
+
+function monthStrToNum(m){
+  const map = { jan:1, fev:2, mar:3, abr:4, mai:5, jun:6, jul:7, ago:8, set:9, out:10, nov:11, dez:12 };
+  return map[m] || 0;
+}
 
 function extractParensText(txt){
   return Array.from(txt.matchAll(/\(([^)]+)\)/g)).map(m => m[1] || "");
@@ -217,22 +235,53 @@ function extractParensText(txt){
 function removeParens(txt){
   return txt.replace(/\([^)]*\)/g, " ");
 }
-function firstDateOutsideParens(txt){
+
+function extractDatesOutsideParens(txt){
   const clean = removeParens(txt);
-  const dates = Array.from(clean.matchAll(DATE_RE)).map(m => m[1]);
+  const out = [];
+
+  // dd/mm/aaaa
+  for (const m of clean.matchAll(DATE_FULL_RE)) out.push(m[1]);
+
+  // mon/aaaa
+  for (const m of clean.matchAll(DATE_MONYYYY_RE)) out.push(`${m[1].toLowerCase()}/${m[2]}`);
+
+  // mm/aaaa (evita duplicar o "02/2026" vindo de "03/02/2026")
+  for (const m of clean.matchAll(DATE_MMYYYY_RE)){
+    const val = m[1];
+    const isPartOfAnyFull = out.some(d => /^\d{1,2}\/\d{1,2}\/\d{4}$/.test(d) && d.endsWith("/" + val.split("/")[1]) && d.includes("/" + val.split("/")[0] + "/"));
+    if (!isPartOfAnyFull) out.push(val);
+  }
+
+  return out.map(normalizeMonthYear);
+}
+
+function firstDateOutsideParens(txt){
+  const dates = extractDatesOutsideParens(txt);
   return dates.length ? dates[dates.length - 1] : "";
 }
+
 function parseAdjDatesFromParens(txt){
-  const parens = extractParensText(txt).join(" | ").toLowerCase();
+  const parensRaw = extractParensText(txt).join(" | ");
+  const parens = parensRaw.toLowerCase();
 
   const washerDates = [];
   const sensorDates = [];
 
-  for (const m of parens.matchAll(/arruela\s*:\s*(\d{1,2}\/\d{1,2}\/\d{4})/g)){
-    washerDates.push(m[1]);
+  const ADJ_DATE_RE = /(\d{1,2}\/\d{1,2}\/\d{4}|\d{1,2}\/\d{4}|(?:jan|fev|mar|abr|mai|jun|jul|ago|set|out|nov|dez)\.?\s*\/\s*\d{4})/g;
+
+  // pega o pedaço após "arruela:" e extrai datas dentro dele
+  for (const m of parens.matchAll(/arruela\s*:\s*([^|)]+)/g)){
+    const chunk = (m[1] || "");
+    const hit = chunk.match(ADJ_DATE_RE);
+    if (hit) washerDates.push(...hit.map(normalizeMonthYear));
   }
-  for (const m of parens.matchAll(/sensor\s*:\s*(\d{1,2}\/\d{1,2}\/\d{4})/g)){
-    sensorDates.push(m[1]);
+
+  // pega o pedaço após "sensor:" e extrai datas dentro dele
+  for (const m of parens.matchAll(/sensor\s*:\s*([^|)]+)/g)){
+    const chunk = (m[1] || "");
+    const hit = chunk.match(ADJ_DATE_RE);
+    if (hit) sensorDates.push(...hit.map(normalizeMonthYear));
   }
 
   const hasWasher = parens.includes("arruela");
@@ -350,18 +399,55 @@ function populateNodeSelect(selectEl, nodes, keepValue=true){
 }
 
 function toKeyDate(s){
-  const [d,m,y] = s.split("/").map(Number);
-  return (y*10000 + m*100 + d);
+  const t = normalizeMonthYear(s);
+
+  // dd/mm/aaaa
+  if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(t)){
+    const [d,m,y] = t.split("/").map(Number);
+    return (y*10000 + m*100 + d);
+  }
+
+  // mm/aaaa
+  if (/^\d{1,2}\/\d{4}$/.test(t)){
+    const [m,y] = t.split("/").map(Number);
+    return (y*10000 + m*100 + 0);
+  }
+
+  // mon/aaaa
+  const mm = t.match(/^(jan|fev|mar|abr|mai|jun|jul|ago|set|out|nov|dez)\/(\d{4})$/);
+  if (mm){
+    const m = monthStrToNum(mm[1]);
+    const y = Number(mm[2]);
+    return (y*10000 + m*100 + 0);
+  }
+
+  return 0;
 }
+
+function uniq(list){
+  const out = [];
+  const seen = new Set();
+  for (const x of (list || [])){
+    const k = normalizeMonthYear(x);
+    if (!k) continue;
+    if (!seen.has(k)){
+      seen.add(k);
+      out.push(k);
+    }
+  }
+  return out;
+}
+
 function formatDates(list){
   if (!list || list.length === 0) return "—";
-  return list.slice().sort((a,b)=>toKeyDate(a)-toKeyDate(b)).join(", ");
+  return uniq(list).slice().sort((a,b)=>toKeyDate(a)-toKeyDate(b)).join(", ");
 }
 function formatSizes(list){
   if (!list || list.length === 0) return "—";
   return list.join(", ");
 }
 
+/* ===== Furos ===== */
 function parseFuro(raw){
   const txt = String(raw).trim();
   if (!txt) return null;
@@ -419,6 +505,7 @@ function buildHoleMaps(furos){
   return { byPair, byNode };
 }
 
+/* ===== Render ===== */
 function renderByWind(list){
   const counts = new Map([[0,0],[50,0],[100,0]]);
   for (const e of list) counts.set(e.wind, (counts.get(e.wind)||0)+1);
@@ -508,28 +595,21 @@ function renderPairs(entries, focusValue, tbodyId, mode){
 
 /* ==========================
    ✅ UPDATE COMBINANDO PÓS-INCIDÊNCIA
-   - Pós-ajuste entra como ocorrência também (Incidência e Resumo)
 ========================== */
 function update(){
-  // 1) Principal
   const baseAll = flattenAll(entradas);
-
-  // 2) Pós-ajuste (entram como ocorrências)
   const postSensorAll = flattenAll(entradasPosAjusteSensor);
   const postWasherAll = flattenAll(entradasPosAjusteArruela);
-
-  // 3) Dataset combinado
   const allCombined = [...baseAll, ...postSensorAll, ...postWasherAll];
 
-  // Filtro de vento
   const wind = document.getElementById("windFilter").value;
   const filtered = (wind === "ALL") ? allCombined : allCombined.filter(e => e.wind === Number(wind));
 
   document.getElementById("total").textContent = String(filtered.length);
   document.getElementById("kTotal").textContent = String(filtered.length);
 
-  // RESUMO por coletor (status acumulado)
-  const statusPorPar = new Map(); // key -> {hasWasher, hasSensor}
+  // Resumo por coletor (status acumulado)
+  const statusPorPar = new Map();
   for (const e of filtered){
     const key = `${e.node}-${e.coletor}`;
     if (!statusPorPar.has(key)) statusPorPar.set(key, { hasWasher:false, hasSensor:false });
@@ -552,10 +632,9 @@ function update(){
   document.getElementById("kTotalWashers").textContent = String(washerOnly + both);
   document.getElementById("kTotalSensors").textContent = String(sensorOnly + both);
 
-  // Ocorrências por vento (inclui pós)
   renderByWind(filtered);
 
-  // Furos (mantém separado, por vento)
+  // Furos
   const furosAll = flattenFuros(entradasFurosplaca);
   const furosFiltered = (wind === "ALL") ? furosAll : furosAll.filter(f => f.wind === Number(wind));
   document.getElementById("kFuros").textContent = String(furosFiltered.length);
@@ -569,7 +648,7 @@ function update(){
   populateNodeSelect(selTop, nodeList, true);
   populateNodeSelect(selPairs, nodeList, true);
 
-  // Top Nodes (inclui pós)
+  // Top Nodes
   const byNode = computeByNode(filtered);
   for (const [node, agg] of byNode){
     const h = holeMaps.byNode.get(node);
@@ -578,7 +657,7 @@ function update(){
   }
   renderTopNodes(byNode, selTop.value);
 
-  // Incidência (Pairs) (inclui pós)
+  // Incidência
   const byPair = computeByPair(filtered);
   for (const [pair, agg] of byPair){
     const h = holeMaps.byPair.get(pair);
@@ -588,7 +667,7 @@ function update(){
   }
   renderPairs(byPair, selPairs.value, "topPairs", "main");
 
-  // Pós-ajuste separado (continua útil)
+  // Pós-ajuste separado
   renderPairs(computeByPair(postSensorAll), "ALL", "postSensorPairs", "post");
   renderPairs(computeByPair(postWasherAll), "ALL", "postWasherPairs", "post");
 }
