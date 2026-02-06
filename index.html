@@ -134,9 +134,12 @@
           <th>Node</th><th>Coletor</th><th>Ocorrências</th>
           <th>Arruela</th><th>Sensor</th>
           <th>Ventos</th>
-          <th>Datas</th>
+          <th>Datas ocorrência</th>
+          <th>Datas arruela</th>
+          <th>Datas sensor</th>
           <th>Furos (#)</th>
           <th>Tamanhos</th>
+          <th>Datas furo</th>
         </tr>
       </thead>
       <tbody id="topPairs"></tbody>
@@ -148,7 +151,7 @@
   <div class="box">
     <h2>Incidência pós-ajuste — Sensores reincidentes</h2>
     <table>
-      <thead><tr><th>Node</th><th>Coletor</th><th>Ocorrências</th><th>Ventos</th><th>Datas</th></tr></thead>
+      <thead><tr><th>Node</th><th>Coletor</th><th>Ocorrências</th><th>Ventos</th><th>Datas ocorrência</th></tr></thead>
       <tbody id="postSensorPairs"></tbody>
     </table>
   </div>
@@ -156,7 +159,7 @@
   <div class="box">
     <h2>Incidência pós-ajuste — Arruelas reincidentes</h2>
     <table>
-      <thead><tr><th>Node</th><th>Coletor</th><th>Ocorrências</th><th>Ventos</th><th>Datas</th></tr></thead>
+      <thead><tr><th>Node</th><th>Coletor</th><th>Ocorrências</th><th>Ventos</th><th>Datas ocorrência</th></tr></thead>
       <tbody id="postWasherPairs"></tbody>
     </table>
   </div>
@@ -177,16 +180,14 @@ const entradas = [
   "53-3(arruela) vento 100%",
   "11-9 vento 100%",
   "3-7 vento 100%",
-  "9-10(arruela) vento 100% 04/02/2026",
+  "9-10(arruela:04/02/2026) vento 100% 04/02/2026",
   "53-7(arruela) vento 50%",
   "45-13(arruela) vento 50%",
-  "29-16(arruela) vento 50%",
-  "58-4(arruela e sensor) vento 50% 03/02/2026",
-  "39-8(arruela) vento 50%",
-  "39-8 vento 50%",
-  "39-8 vento 50%",
-  "39-8 vento 100%(sensor) 05/02/2026",
-  "23-7(arruela) 03/02/2026",
+  "29-16(arruela:03/02/2026) vento 50% 03/02/2026",
+  "58-4(arruela:03/02/2026 e sensor:03/02/2026) vento 50% 03/02/2026",
+  "39-8(arruela:03/02/2026 e sensor:05/02/2026) vento 50% 03/02/2026",
+  "23-7(arruela:03/02/2026) 03/02/2026",
+  "11-10(arruela:03/02/2026) 03/02/2026"
 ];
 
 const entradasPosAjusteSensor = [
@@ -194,11 +195,13 @@ const entradasPosAjusteSensor = [
 ];
 
 const entradasPosAjusteArruela = [
-  "39-8 vento 100% 05/02/2026"
+  "39-8 vento 50% 04/02/2026",
+  "39-8 vento 50% 04/02/2026",
+  "39-8 vento 100% 05/02/2026",
 ];
 
 const entradasFurosplaca = [
-  "39-8 vento 100% furo 5mm"
+  "39-8 vento 100% furo 5mm 05/02/2026"
 ];
 /* ==========================
    FIM DA ÁREA DE EDIÇÃO
@@ -206,8 +209,39 @@ const entradasFurosplaca = [
 
 document.getElementById("lastUpdate").textContent = DATA_ATUALIZACAO;
 
-/* --------- PARSER (suporta parênteses em qualquer posição) --------- */
-function parseEntry(raw, forcedType = null){
+const DATE_RE = /\b(\d{1,2}\/\d{1,2}\/\d{4})\b/g;
+
+function extractParensText(txt){
+  return Array.from(txt.matchAll(/\(([^)]+)\)/g)).map(m => m[1] || "");
+}
+function removeParens(txt){
+  return txt.replace(/\([^)]*\)/g, " ");
+}
+function firstDateOutsideParens(txt){
+  const clean = removeParens(txt);
+  const dates = Array.from(clean.matchAll(DATE_RE)).map(m => m[1]);
+  return dates.length ? dates[dates.length - 1] : "";
+}
+function parseAdjDatesFromParens(txt){
+  const parens = extractParensText(txt).join(" | ").toLowerCase();
+
+  const washerDates = [];
+  const sensorDates = [];
+
+  for (const m of parens.matchAll(/arruela\s*:\s*(\d{1,2}\/\d{1,2}\/\d{4})/g)){
+    washerDates.push(m[1]);
+  }
+  for (const m of parens.matchAll(/sensor\s*:\s*(\d{1,2}\/\d{1,2}\/\d{4})/g)){
+    sensorDates.push(m[1]);
+  }
+
+  const hasWasher = parens.includes("arruela");
+  const hasSensor = parens.includes("sensor");
+
+  return { washerDates, sensorDates, hasWasher, hasSensor };
+}
+
+function parseEntry(raw){
   const txt = String(raw).trim();
   if (!txt) return null;
 
@@ -215,24 +249,16 @@ function parseEntry(raw, forcedType = null){
   const mw = txt.match(/vento\s*(0|50|100)\s*%?/i);
   if (mw && mw[1]) wind = Number(mw[1]);
 
-  let date = "";
-  const md = txt.match(/\b(\d{1,2}\/\d{1,2}\/\d{4})\b/);
-  if (md && md[1]) date = md[1];
-
   const mbase = txt.match(/^(\d+)\s*-\s*(\d+)/);
   if (!mbase) return null;
   const node = Number(mbase[1]);
   const coletor = Number(mbase[2]);
 
-  let washer = 0, sensor = 0;
-  if (forcedType === "sensor") { sensor = 1; }
-  else if (forcedType === "arruela") { washer = 1; }
-  else {
-    const parens = Array.from(txt.matchAll(/\(([^)]+)\)/g)).map(m => (m[1] || "").toLowerCase());
-    const joined = parens.join(" | ");
-    washer = joined.includes("arruela") ? 1 : 0;
-    sensor = joined.includes("sensor") ? 1 : 0;
-  }
+  const occDate = firstDateOutsideParens(txt);
+  const adj = parseAdjDatesFromParens(txt);
+
+  const hasWasher = adj.washerDates.length ? true : adj.hasWasher;
+  const hasSensor = adj.sensorDates.length ? true : adj.hasSensor;
 
   const valid =
     Number.isFinite(node) && Number.isFinite(coletor) &&
@@ -240,92 +266,74 @@ function parseEntry(raw, forcedType = null){
     coletor >= 1 && coletor <= 16 &&
     [0,50,100].includes(wind);
 
-  return valid ? { wind, node, coletor, washer, sensor, date } : null;
+  return valid ? {
+    wind, node, coletor,
+    washer: hasWasher ? 1 : 0,
+    sensor: hasSensor ? 1 : 0,
+    occDate,
+    washerAdjDates: adj.washerDates,
+    sensorAdjDates: adj.sensorDates
+  } : null;
 }
 
-function flattenAll(list, forcedType=null){
+function flattenAll(list){
   const out = [];
   for (const r of list){
-    const e = parseEntry(r, forcedType);
+    const e = parseEntry(r);
     if (e) out.push(e);
   }
   return out;
 }
 
-/* ===== Agregadores para tabelas ===== */
-function aggInit(){ return { count:0, washer:0, sensor:0, both:0, winds:[], dates:[], holesCount:0, holeSizes:[] }; }
+function aggInit(){
+  return {
+    count:0,
+    washerOnly:0, sensorOnly:0, both:0,
+    washerAny:0, sensorAny:0,
+    winds:[],
+    occDates:[],
+    washerAdjDates:[],
+    sensorAdjDates:[],
+    holesCount:0,
+    holeSizes:[],
+    holeDates:[]
+  };
+}
 function aggAdd(agg, e){
   agg.count++;
 
-  const isWasherOnly = (e.washer === 1 && e.sensor === 0);
-  const isSensorOnly = (e.washer === 0 && e.sensor === 1);
-  const isBoth = (e.washer === 1 && e.sensor === 1);
+  const w = !!e.washer, s = !!e.sensor;
 
-  agg.washer += isWasherOnly ? 1 : 0;
-  agg.sensor += isSensorOnly ? 1 : 0;
-  agg.both += isBoth ? 1 : 0;
+  if (w) agg.washerAny++;
+  if (s) agg.sensorAny++;
+
+  if (w && !s) agg.washerOnly++;
+  else if (!w && s) agg.sensorOnly++;
+  else if (w && s) agg.both++;
 
   agg.winds.push(e.wind);
-  if (e.date) agg.dates.push(e.date);
+
+  if (e.occDate) agg.occDates.push(e.occDate);
+  if (e.washerAdjDates?.length) agg.washerAdjDates.push(...e.washerAdjDates);
+  if (e.sensorAdjDates?.length) agg.sensorAdjDates.push(...e.sensorAdjDates);
 }
 
-/* ---- Furos: parse com tamanho ---- */
-function parseFuro(raw){
-  const txt = String(raw).trim();
-  if (!txt) return null;
-
-  let wind = 0;
-  const mw = txt.match(/vento\s*(0|50|100)\s*%?/i);
-  if (mw && mw[1]) wind = Number(mw[1]);
-
-  const mbase = txt.match(/^(\d+)\s*-\s*(\d+)/);
-  if (!mbase) return null;
-  const node = Number(mbase[1]);
-  const coletor = Number(mbase[2]);
-
-  // tamanho: pega "furo 5mm", "furo 4.5 mm", "furo 5 mm", etc.
-  let size = "";
-  const ms = txt.match(/furo\s*([0-9]+(?:[.,][0-9]+)?)\s*mm/i);
-  if (ms && ms[1]) size = (ms[1].replace(",", ".") + "mm");
-
-  const valid =
-    Number.isFinite(node) && Number.isFinite(coletor) &&
-    node >= 1 && node <= 72 &&
-    coletor >= 1 && coletor <= 16 &&
-    [0,50,100].includes(wind);
-
-  return valid ? { wind, node, coletor, size } : null;
-}
-
-function flattenFuros(list){
-  const out = [];
-  for (const r of list){
-    const e = parseFuro(r);
-    if (e) out.push(e);
+function computeByNode(list){
+  const byNode = new Map();
+  for (const e of list){
+    if (!byNode.has(e.node)) byNode.set(e.node, aggInit());
+    aggAdd(byNode.get(e.node), e);
   }
-  return out;
+  return Array.from(byNode.entries()).sort((a,b)=>b[1].count-a[1].count);
 }
-
-/* ---- Mapas de furos por par e por node ---- */
-function buildHoleMaps(furos){
-  const byPair = new Map(); // "node-coletor" -> {count, sizes[]}
-  const byNode = new Map(); // node -> {count, sizes[]}
-
-  for (const f of furos){
-    const key = `${f.node}-${f.coletor}`;
-
-    if (!byPair.has(key)) byPair.set(key, { count:0, sizes:[] });
-    const p = byPair.get(key);
-    p.count++;
-    if (f.size) p.sizes.push(f.size);
-
-    if (!byNode.has(f.node)) byNode.set(f.node, { count:0, sizes:[] });
-    const n = byNode.get(f.node);
-    n.count++;
-    if (f.size) n.sizes.push(f.size);
+function computeByPair(list){
+  const byPair = new Map();
+  for (const e of list){
+    const k = `${e.node}-${e.coletor}`;
+    if (!byPair.has(k)) byPair.set(k, aggInit());
+    aggAdd(byPair.get(k), e);
   }
-
-  return { byPair, byNode };
+  return Array.from(byPair.entries()).sort((a,b)=>b[1].count-a[1].count);
 }
 
 function populateNodeSelect(selectEl, nodes, keepValue=true){
@@ -339,6 +347,76 @@ function populateNodeSelect(selectEl, nodes, keepValue=true){
   }
   const hasPrev = Array.from(selectEl.options).some(o => o.value === prev);
   selectEl.value = hasPrev ? prev : "ALL";
+}
+
+function toKeyDate(s){
+  const [d,m,y] = s.split("/").map(Number);
+  return (y*10000 + m*100 + d);
+}
+function formatDates(list){
+  if (!list || list.length === 0) return "—";
+  return list.slice().sort((a,b)=>toKeyDate(a)-toKeyDate(b)).join(", ");
+}
+function formatSizes(list){
+  if (!list || list.length === 0) return "—";
+  return list.join(", ");
+}
+
+function parseFuro(raw){
+  const txt = String(raw).trim();
+  if (!txt) return null;
+
+  let wind = 0;
+  const mw = txt.match(/vento\s*(0|50|100)\s*%?/i);
+  if (mw && mw[1]) wind = Number(mw[1]);
+
+  const mbase = txt.match(/^(\d+)\s*-\s*(\d+)/);
+  if (!mbase) return null;
+  const node = Number(mbase[1]);
+  const coletor = Number(mbase[2]);
+
+  let size = "";
+  const ms = txt.match(/furo\s*([0-9]+(?:[.,][0-9]+)?)\s*mm/i);
+  if (ms && ms[1]) size = (ms[1].replace(",", ".") + "mm");
+
+  const holeDate = firstDateOutsideParens(txt);
+
+  const valid =
+    Number.isFinite(node) && Number.isFinite(coletor) &&
+    node >= 1 && node <= 72 &&
+    coletor >= 1 && coletor <= 16 &&
+    [0,50,100].includes(wind);
+
+  return valid ? { wind, node, coletor, size, holeDate } : null;
+}
+function flattenFuros(list){
+  const out = [];
+  for (const r of list){
+    const e = parseFuro(r);
+    if (e) out.push(e);
+  }
+  return out;
+}
+function buildHoleMaps(furos){
+  const byPair = new Map();
+  const byNode = new Map();
+
+  for (const f of furos){
+    const key = `${f.node}-${f.coletor}`;
+
+    if (!byPair.has(key)) byPair.set(key, { count:0, sizes:[], dates:[] });
+    const p = byPair.get(key);
+    p.count++;
+    if (f.size) p.sizes.push(f.size);
+    if (f.holeDate) p.dates.push(f.holeDate);
+
+    if (!byNode.has(f.node)) byNode.set(f.node, { count:0, sizes:[], dates:[] });
+    const n = byNode.get(f.node);
+    n.count++;
+    if (f.size) n.sizes.push(f.size);
+    if (f.holeDate) n.dates.push(f.holeDate);
+  }
+  return { byPair, byNode };
 }
 
 function renderByWind(list){
@@ -357,31 +435,6 @@ function renderByWind(list){
   }
 }
 
-function computeByNode(list){
-  const byNode = new Map();
-  for (const e of list){
-    if (!byNode.has(e.node)) byNode.set(e.node, aggInit());
-    aggAdd(byNode.get(e.node), e);
-  }
-  return Array.from(byNode.entries()).sort((a,b)=>b[1].count-a[1].count);
-}
-
-function computeByPair(list){
-  const byPair = new Map();
-  for (const e of list){
-    const k = `${e.node}-${e.coletor}`;
-    if (!byPair.has(k)) byPair.set(k, aggInit());
-    aggAdd(byPair.get(k), e);
-  }
-  return Array.from(byPair.entries()).sort((a,b)=>b[1].count-a[1].count);
-}
-
-function formatSizes(list){
-  if (!list || list.length === 0) return "—";
-  // mantém repetição (se quiser único, eu mudo)
-  return list.join(", ");
-}
-
 function renderTopNodes(entries, focusValue){
   const tbody = document.getElementById("topNodes");
   tbody.innerHTML = "";
@@ -395,8 +448,8 @@ function renderTopNodes(entries, focusValue){
     tr.innerHTML = `
       <td>${node}</td>
       <td><b>${agg.count}</b></td>
-      <td>${agg.washer}</td>
-      <td>${agg.sensor}</td>
+      <td>${agg.washerOnly}</td>
+      <td>${agg.sensorOnly}</td>
       <td>${agg.both}</td>
       <td>${agg.holesCount || 0}</td>
       <td class="mono">${formatSizes(agg.holeSizes)}</td>
@@ -417,57 +470,65 @@ function renderPairs(entries, focusValue, tbodyId, mode){
     ? entries
     : entries.filter(([pair]) => String(pair).startsWith(focusValue + "-"));
 
-  const show = filtered.slice(0, 20);
+  const show = filtered.slice(0, 25);
 
   for (const [pair, agg] of show){
     const [node, coletor] = pair.split("-");
     const windsSorted = agg.winds.slice().sort((a,b)=>a-b).map(w=>`${w}%`).join(", ");
-
-    const datesSorted = agg.dates.slice().sort((a,b)=>{
-      const toKey = (s) => {
-        const [d,m,y] = s.split("/").map(Number);
-        return (y*10000 + m*100 + d);
-      };
-      return toKey(a) - toKey(b);
-    }).join(", ");
 
     const tr = document.createElement("tr");
     if (mode === "main"){
       tr.innerHTML = `
         <td>${node}</td><td>${coletor}</td>
         <td><b>${agg.count}</b></td>
-        <td>${agg.washer}</td><td>${agg.sensor}</td>
+        <td>${agg.washerAny}</td><td>${agg.sensorAny}</td>
         <td class="mono">${windsSorted || "—"}</td>
-        <td class="mono">${datesSorted || "—"}</td>
+        <td class="mono">${formatDates(agg.occDates)}</td>
+        <td class="mono">${formatDates(agg.washerAdjDates)}</td>
+        <td class="mono">${formatDates(agg.sensorAdjDates)}</td>
         <td>${agg.holesCount || 0}</td>
         <td class="mono">${formatSizes(agg.holeSizes)}</td>
+        <td class="mono">${formatDates(agg.holeDates)}</td>
       `;
     } else {
       tr.innerHTML = `
         <td>${node}</td><td>${coletor}</td>
         <td><b>${agg.count}</b></td>
         <td class="mono">${windsSorted || "—"}</td>
-        <td class="mono">${datesSorted || "—"}</td>
+        <td class="mono">${formatDates(agg.occDates)}</td>
       `;
     }
     tbody.appendChild(tr);
   }
 
   if (show.length === 0){
-    tbody.innerHTML = `<tr><td colspan="${mode==='main' ? 9 : 5}">Sem dados.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="${mode==='main' ? 12 : 5}">Sem dados.</td></tr>`;
   }
 }
 
+/* ==========================
+   ✅ UPDATE COMBINANDO PÓS-INCIDÊNCIA
+   - Pós-ajuste entra como ocorrência também (Incidência e Resumo)
+========================== */
 function update(){
-  const all = flattenAll(entradas, null);
+  // 1) Principal
+  const baseAll = flattenAll(entradas);
 
+  // 2) Pós-ajuste (entram como ocorrências)
+  const postSensorAll = flattenAll(entradasPosAjusteSensor);
+  const postWasherAll = flattenAll(entradasPosAjusteArruela);
+
+  // 3) Dataset combinado
+  const allCombined = [...baseAll, ...postSensorAll, ...postWasherAll];
+
+  // Filtro de vento
   const wind = document.getElementById("windFilter").value;
-  const filtered = (wind === "ALL") ? all : all.filter(e => e.wind === Number(wind));
+  const filtered = (wind === "ALL") ? allCombined : allCombined.filter(e => e.wind === Number(wind));
 
   document.getElementById("total").textContent = String(filtered.length);
   document.getElementById("kTotal").textContent = String(filtered.length);
 
-  // RESUMO por coletor (par node–coletor)
+  // RESUMO por coletor (status acumulado)
   const statusPorPar = new Map(); // key -> {hasWasher, hasSensor}
   for (const e of filtered){
     const key = `${e.node}-${e.coletor}`;
@@ -491,24 +552,24 @@ function update(){
   document.getElementById("kTotalWashers").textContent = String(washerOnly + both);
   document.getElementById("kTotalSensors").textContent = String(sensorOnly + both);
 
-  // KPI: Quantidade de furos (linhas) no filtro atual
+  // Ocorrências por vento (inclui pós)
+  renderByWind(filtered);
+
+  // Furos (mantém separado, por vento)
   const furosAll = flattenFuros(entradasFurosplaca);
   const furosFiltered = (wind === "ALL") ? furosAll : furosAll.filter(f => f.wind === Number(wind));
   document.getElementById("kFuros").textContent = String(furosFiltered.length);
 
-  // Mapas de furos (para Top Nodes e Incidência)
   const holeMaps = buildHoleMaps(furosFiltered);
 
-  renderByWind(filtered);
-
+  // Selects
   const nodeList = Array.from(new Set(filtered.map(e => e.node))).sort((a,b)=>a-b);
-
   const selTop = document.getElementById("nodeFocusTop");
   const selPairs = document.getElementById("nodeFocusPairs");
   populateNodeSelect(selTop, nodeList, true);
   populateNodeSelect(selPairs, nodeList, true);
 
-  // Top Nodes + anexar furos por node
+  // Top Nodes (inclui pós)
   const byNode = computeByNode(filtered);
   for (const [node, agg] of byNode){
     const h = holeMaps.byNode.get(node);
@@ -517,20 +578,19 @@ function update(){
   }
   renderTopNodes(byNode, selTop.value);
 
-  // Incidência + anexar furos por par
+  // Incidência (Pairs) (inclui pós)
   const byPair = computeByPair(filtered);
   for (const [pair, agg] of byPair){
     const h = holeMaps.byPair.get(pair);
     agg.holesCount = h ? h.count : 0;
     agg.holeSizes = h ? h.sizes.slice() : [];
+    agg.holeDates = h ? h.dates.slice() : [];
   }
   renderPairs(byPair, selPairs.value, "topPairs", "main");
 
-  // Pós-ajuste (sem furos aqui, por enquanto)
-  const postSensor = flattenAll(entradasPosAjusteSensor, "sensor");
-  const postWasher = flattenAll(entradasPosAjusteArruela, "arruela");
-  renderPairs(computeByPair(postSensor), "ALL", "postSensorPairs", "post");
-  renderPairs(computeByPair(postWasher), "ALL", "postWasherPairs", "post");
+  // Pós-ajuste separado (continua útil)
+  renderPairs(computeByPair(postSensorAll), "ALL", "postSensorPairs", "post");
+  renderPairs(computeByPair(postWasherAll), "ALL", "postWasherPairs", "post");
 }
 
 document.getElementById("windFilter").addEventListener("change", update);
