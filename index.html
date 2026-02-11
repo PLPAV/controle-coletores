@@ -55,16 +55,6 @@
 <div class="row">
   <span class="pill"><b>Atualização:</b> <span id="lastUpdate" class="mono">—</span></span>
   <span class="pill"><b>Total (filtro):</b> <span id="total" class="mono">0</span></span>
-
-  <span class="pill">
-    <b>Filtro de vento:</b>
-    <select id="windFilter">
-      <option value="ALL">Todos</option>
-      <option value="0">0%</option>
-      <option value="50">50%</option>
-      <option value="100">100%</option>
-    </select>
-  </span>
 </div>
 
 <div class="grid">
@@ -571,7 +561,6 @@ function update(){
   const wind = document.getElementById("windFilter").value;
   const filtered = (wind === "ALL") ? allCombined : allCombined.filter(e => e.wind === Number(wind));
 
-  document.getElementById("total").textContent = String(filtered.length);
   document.getElementById("kTotal").textContent = String(filtered.length);
 
   // Resumo por coletor (status acumulado)
@@ -647,4 +636,3 @@ update();
 
 </body>
 </html>
-
