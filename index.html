@@ -96,7 +96,6 @@
 <div class="grid">
   <div class="box">
     <div class="controlRow">
-      <!-- ✅ Removido "Top" -->
       <h2 style="margin:0">Nodes (mais ocorrências)</h2>
       <span class="muted">Node:</span>
       <select id="nodeFocusTop">
@@ -112,8 +111,7 @@
           <th>Arruela (somente)</th>
           <th>Sensor (somente)</th>
           <th>Arruela+Sensor</th>
-          <th>Furos (#)</th>
-          <th>Tamanhos</th>
+          <th>Furos</th>
         </tr>
       </thead>
       <tbody id="topNodes"></tbody>
@@ -138,7 +136,7 @@
           <th>Datas ocorrência</th>
           <th>Datas arruela</th>
           <th>Datas sensor</th>
-          <th>Furos (#)</th>
+          <th>Furos</th>
           <th>Tamanhos</th>
           <th>Datas furo</th>
         </tr>
@@ -189,7 +187,8 @@ const entradas = [
   "39-8(arruela:03/02/2026 e sensor:05/02/2026) vento 50% 03/02/2026",
   "23-7(arruela:03/02/2026) 03/02/2026",
   "11-10(arruela:03/02/2026) 03/02/2026",
-  "60-2(arruela:09/02/2026 e sensor:09/02/2026) vento 50% 09/02/2026"
+  "60-2(arruela:09/02/2026 e sensor:09/02/2026) vento 50% 09/02/2026",
+  "50-15(arruela:11/02/2026) vento 100% 11/02/2026"
 ];
 
 const entradasPosAjusteSensor = [
@@ -205,7 +204,6 @@ const entradasPosAjusteArruela = [
 const entradasFurosplaca = [
   "39-8 vento 100% furo 5mm 05/02/2026",
   "60-2 vento 50% furo 5mm 09/02/2026"
-
 ];
 /* ==========================
    FIM DA ÁREA DE EDIÇÃO
@@ -270,10 +268,7 @@ function lastFlexDateOutsideParens(txt){
   return hits.length ? hits[hits.length - 1].trim() : "";
 }
 
-/* ==========================================================
-   ✅ FIX do bug do 39-8:
-   - Datas arruela NÃO podem pegar datas do sensor (e vice-versa)
-========================================================== */
+/* FIX: datas de arruela não pegam datas do sensor e vice-versa */
 function parseAdjDatesFromParens(txt){
   const parensJoined = extractParensText(txt).join(" | ");
   const low = parensJoined.toLowerCase();
@@ -281,14 +276,12 @@ function parseAdjDatesFromParens(txt){
   const washerDates = [];
   const sensorDates = [];
 
-  // arruela: pega até antes de sensor:
   for (const m of low.matchAll(/arruela\s*:\s*(.*?)(?=\bsensor\s*:|$)/g)){
     const chunk = m[1] || "";
     const hits = Array.from(chunk.matchAll(FLEX_DATE_RE)).map(x => x[1]);
     if (hits.length) washerDates.push(...hits.map(s => s.trim()));
   }
 
-  // sensor: pega até antes de arruela:
   for (const m of low.matchAll(/sensor\s*:\s*(.*?)(?=\barruela\s*:|$)/g)){
     const chunk = m[1] || "";
     const hits = Array.from(chunk.matchAll(FLEX_DATE_RE)).map(x => x[1]);
@@ -398,6 +391,8 @@ function computeByPair(list){
 
 function populateNodeSelect(selectEl, nodes, keepValue=true){
   const prev = keepValue ? selectEl.value : "ALL";
+  const wasAll = (prev === "ALL");
+
   while (selectEl.options.length > 1) selectEl.remove(1);
   for (const n of nodes){
     const opt = document.createElement("option");
@@ -405,6 +400,10 @@ function populateNodeSelect(selectEl, nodes, keepValue=true){
     opt.textContent = String(n);
     selectEl.appendChild(opt);
   }
+
+  // Se estava em ALL, permanece ALL (assim a lista sempre atualiza e mostra novos nodes)
+  if (wasAll) { selectEl.value = "ALL"; return; }
+
   const hasPrev = Array.from(selectEl.options).some(o => o.value === prev);
   selectEl.value = hasPrev ? prev : "ALL";
 }
@@ -492,8 +491,9 @@ function renderTopNodes(entries, focusValue){
   const tbody = document.getElementById("topNodes");
   tbody.innerHTML = "";
 
+  // ✅ Em ALL: mostra TODOS (assim node 60 aparece sem precisar mexer no select)
   const show = (focusValue === "ALL")
-    ? entries.slice(0, 12)
+    ? entries
     : entries.filter(([node]) => String(node) === focusValue);
 
   for (const [node, agg] of show){
@@ -505,13 +505,12 @@ function renderTopNodes(entries, focusValue){
       <td>${agg.sensorOnly}</td>
       <td>${agg.both}</td>
       <td>${agg.holesCount || 0}</td>
-      <td class="mono">${formatSizes(agg.holeSizes)}</td>
     `;
     tbody.appendChild(tr);
   }
 
   if (show.length === 0){
-    tbody.innerHTML = `<tr><td colspan="7">Sem dados para o node selecionado.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="6">Sem dados para o node selecionado.</td></tr>`;
   }
 }
 
