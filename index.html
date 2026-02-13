@@ -52,7 +52,6 @@
 
 <h1>Controle de Coletores (72 nodes × 16 coletores)</h1>
 
-<!-- ✅ TOPO CORRIGIDO: sem "Total (filtro)" e com filtro de vento mantido -->
 <div class="row">
   <span class="pill"><b>Atualização:</b> <span id="lastUpdate" class="mono">—</span></span>
 
@@ -111,7 +110,8 @@
           <th>Arruela (somente)</th>
           <th>Sensor (somente)</th>
           <th>Arruela+Sensor</th>
-          <th>Furos</th> <!-- ✅ sem (#) -->
+          <th>Meio pulso</th>
+          <th>Furos</th>
         </tr>
       </thead>
       <tbody id="topNodes"></tbody>
@@ -131,12 +131,13 @@
       <thead>
         <tr>
           <th>Node</th><th>Coletor</th><th>Ocorrências</th>
-          <th>Arruela</th><th>Sensor</th>
+          <th>Arruela</th><th>Sensor</th><th>Meio pulso</th>
           <th>Ventos</th>
           <th>Datas ocorrência</th>
           <th>Datas arruela</th>
           <th>Datas sensor</th>
-          <th>Furos</th> <!-- ✅ sem (#) -->
+          <th>Datas meio pulso</th>
+          <th>Furos</th>
           <th>Tamanhos</th>
           <th>Datas furo</th>
         </tr>
@@ -188,7 +189,12 @@ const entradas = [
   "23-7(arruela:03/02/2026) 03/02/2026",
   "11-10(arruela:03/02/2026) 03/02/2026",
   "60-2(arruela:09/02/2026 e sensor:09/02/2026) vento 50% 09/02/2026",
-  "50-15(arruela:11/02/2026) vento 100% 11/02/2026"
+  "50-15(arruela:11/02/2026) vento 100% 11/02/2026",
+
+  "36-4(meio pulso:11/02/2026)",
+  "34-1(meio pulso:11/02/2026)",
+  "40-12(meio pulso:11/02/2026)",
+  "17-12(meio pulso:11/02/2026)"
 ];
 
 const entradasPosAjusteSensor = [
@@ -266,29 +272,40 @@ function lastFlexDateOutsideParens(txt){
   return hits.length ? hits[hits.length - 1].trim() : "";
 }
 
-/* ✅ evita bug arruela pegar data do sensor e vice-versa */
+/* ✅ evita bug arruela pegar data do sensor e vice-versa
+   ✅ adiciona meio pulso: datas próprias
+*/
 function parseAdjDatesFromParens(txt){
   const parensJoined = extractParensText(txt).join(" | ");
   const low = parensJoined.toLowerCase();
 
   const washerDates = [];
   const sensorDates = [];
+  const halfPulseDates = [];
 
-  for (const m of low.matchAll(/arruela\s*:\s*(.*?)(?=\bsensor\s*:|$)/g)){
+  for (const m of low.matchAll(/arruela\s*:\s*(.*?)(?=\bsensor\s*:|\bmeio\s*pulso\s*:|$)/g)){
     const chunk = m[1] || "";
     const hits = Array.from(chunk.matchAll(FLEX_DATE_RE)).map(x => x[1]);
     if (hits.length) washerDates.push(...hits.map(s => s.trim()));
   }
 
-  for (const m of low.matchAll(/sensor\s*:\s*(.*?)(?=\barruela\s*:|$)/g)){
+  for (const m of low.matchAll(/sensor\s*:\s*(.*?)(?=\barruela\s*:|\bmeio\s*pulso\s*:|$)/g)){
     const chunk = m[1] || "";
     const hits = Array.from(chunk.matchAll(FLEX_DATE_RE)).map(x => x[1]);
     if (hits.length) sensorDates.push(...hits.map(s => s.trim()));
   }
 
+  for (const m of low.matchAll(/meio\s*pulso\s*:\s*(.*?)(?=\barruela\s*:|\bsensor\s*:|$)/g)){
+    const chunk = m[1] || "";
+    const hits = Array.from(chunk.matchAll(FLEX_DATE_RE)).map(x => x[1]);
+    if (hits.length) halfPulseDates.push(...hits.map(s => s.trim()));
+  }
+
   const hasWasher = low.includes("arruela");
   const hasSensor = low.includes("sensor");
-  return { washerDates, sensorDates, hasWasher, hasSensor };
+  const hasHalfPulse = low.includes("meio pulso");
+
+  return { washerDates, sensorDates, halfPulseDates, hasWasher, hasSensor, hasHalfPulse };
 }
 
 function parseEntry(raw){
@@ -297,7 +314,7 @@ function parseEntry(raw){
 
   let wind = 0;
   const mw = txt.match(/vento\s*(0|50|100)\s*%?/i);
-  if (mw && mw[1]) wind = Number(mw[1]);
+  if (mw && mw[1]) wind = Number(mw[1]); // se não tiver, fica 0 (válido)
 
   const mbase = txt.match(/^(\d+)\s*-\s*(\d+)/);
   if (!mbase) return null;
@@ -309,6 +326,7 @@ function parseEntry(raw){
 
   const hasWasher = adj.washerDates.length ? true : adj.hasWasher;
   const hasSensor = adj.sensorDates.length ? true : adj.hasSensor;
+  const hasHalfPulse = adj.halfPulseDates.length ? true : adj.hasHalfPulse;
 
   const valid =
     Number.isFinite(node) && Number.isFinite(coletor) &&
@@ -320,9 +338,11 @@ function parseEntry(raw){
     wind, node, coletor,
     washer: hasWasher ? 1 : 0,
     sensor: hasSensor ? 1 : 0,
+    halfPulse: hasHalfPulse ? 1 : 0,
     occDate,
     washerAdjDates: adj.washerDates,
-    sensorAdjDates: adj.sensorDates
+    sensorAdjDates: adj.sensorDates,
+    halfPulseAdjDates: adj.halfPulseDates
   } : null;
 }
 
@@ -340,10 +360,12 @@ function aggInit(){
     count:0,
     washerOnly:0, sensorOnly:0, both:0,
     washerAny:0, sensorAny:0,
+    halfPulseAny:0,
     winds:[],
     occDates:[],
     washerAdjDates:[],
     sensorAdjDates:[],
+    halfPulseAdjDates:[],
     holesCount:0,
     holeSizes:[],
     holeDates:[]
@@ -352,9 +374,11 @@ function aggInit(){
 function aggAdd(agg, e){
   agg.count++;
 
-  const w = !!e.washer, s = !!e.sensor;
+  const w = !!e.washer, s = !!e.sensor, hp = !!e.halfPulse;
+
   if (w) agg.washerAny++;
   if (s) agg.sensorAny++;
+  if (hp) agg.halfPulseAny++;
 
   if (w && !s) agg.washerOnly++;
   else if (!w && s) agg.sensorOnly++;
@@ -365,6 +389,7 @@ function aggAdd(agg, e){
   if (e.occDate) agg.occDates.push(e.occDate);
   if (e.washerAdjDates?.length) agg.washerAdjDates.push(...e.washerAdjDates);
   if (e.sensorAdjDates?.length) agg.sensorAdjDates.push(...e.sensorAdjDates);
+  if (e.halfPulseAdjDates?.length) agg.halfPulseAdjDates.push(...e.halfPulseAdjDates);
 }
 
 function computeByNode(list){
@@ -477,7 +502,7 @@ function renderByWind(list){
   }
 }
 
-/* ✅ NODES: agora mostra TODOS (assim o node 60 aparece automaticamente) */
+/* ✅ NODES: mostra TODOS */
 function renderNodes(entries, focusValue){
   const tbody = document.getElementById("topNodes");
   tbody.innerHTML = "";
@@ -494,13 +519,14 @@ function renderNodes(entries, focusValue){
       <td>${agg.washerOnly}</td>
       <td>${agg.sensorOnly}</td>
       <td>${agg.both}</td>
+      <td>${agg.halfPulseAny || 0}</td>
       <td>${agg.holesCount || 0}</td>
     `;
     tbody.appendChild(tr);
   }
 
   if (show.length === 0){
-    tbody.innerHTML = `<tr><td colspan="6">Sem dados para o node selecionado.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="7">Sem dados para o node selecionado.</td></tr>`;
   }
 }
 
@@ -520,14 +546,17 @@ function renderPairs(entries, focusValue, tbodyId, mode){
 
     const tr = document.createElement("tr");
     if (mode === "main"){
+      const meioPulsoFlag = (agg.halfPulseAny && agg.halfPulseAny > 0) ? "SIM" : "—";
       tr.innerHTML = `
         <td>${node}</td><td>${coletor}</td>
         <td><b>${agg.count}</b></td>
         <td>${agg.washerAny}</td><td>${agg.sensorAny}</td>
+        <td>${meioPulsoFlag}</td>
         <td class="mono">${windsSorted || "—"}</td>
         <td class="mono">${formatDates(agg.occDates)}</td>
         <td class="mono">${formatDates(agg.washerAdjDates)}</td>
         <td class="mono">${formatDates(agg.sensorAdjDates)}</td>
+        <td class="mono">${formatDates(agg.halfPulseAdjDates)}</td>
         <td>${agg.holesCount || 0}</td>
         <td class="mono">${formatSizes(agg.holeSizes)}</td>
         <td class="mono">${formatDates(agg.holeDates)}</td>
@@ -544,7 +573,7 @@ function renderPairs(entries, focusValue, tbodyId, mode){
   }
 
   if (show.length === 0){
-    tbody.innerHTML = `<tr><td colspan="${mode==='main' ? 12 : 5}">Sem dados.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="${mode==='main' ? 14 : 5}">Sem dados.</td></tr>`;
   }
 }
 
